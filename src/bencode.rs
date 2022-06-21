@@ -8,14 +8,56 @@ use nom::{
     IResult, InputTakeAtPosition, multi::many0, bytes::complete::take, error::ErrorKind, AsChar
 };
 
+use anyhow::{anyhow, Result};
+
 type BencodeBytes = Vec<u8>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BencodeValue {
     Bytes(BencodeBytes),
     Integer(i64),
     List(Vec<BencodeValue>),
     Dictionary(HashMap<BencodeBytes, BencodeValue>),
+}
+
+impl BencodeValue {
+    pub fn as_bytes(&self) -> Result<&BencodeBytes> {
+        if let BencodeValue::Bytes(bytes) = self  {
+            Ok(bytes)
+        } else {
+            Err(anyhow!("Expected byte string, found {}", format!("{:?}", self)))
+        }
+    }
+
+    pub fn as_integer(&self) -> Result<i64> {
+        if let BencodeValue::Integer(int) = self {
+            Ok(*int)
+        } else {
+            Err(anyhow!("Expected integer, found {}", format!("{:?}", self)))
+        }
+    }
+
+    pub fn as_list(&self) -> Result<&Vec<BencodeValue>> {
+        if let BencodeValue::List(list) = self {
+            Ok(list)
+        } else {
+            Err(anyhow!("Expected list, found {}", format!("{:?}", self)))
+        }
+    }
+
+    pub fn as_dict(&self) -> Result<&HashMap<BencodeBytes, BencodeValue>> {
+        if let BencodeValue::Dictionary(dict) = self {
+            Ok(dict)
+        } else {
+            Err(anyhow!("Expected dictionary, found {}", format!("{:?}", self)))
+        }
+    }
+
+    pub fn as_str(&self) -> Result<&str> {
+        let self_bytes = self.as_bytes()?;
+        Ok(std::str::from_utf8(&self_bytes)?)
+    }
+
 }
 
 pub fn digit1_or_negative(input: & [u8]) -> IResult<& [u8], & [u8]> {

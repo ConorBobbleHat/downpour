@@ -1,20 +1,14 @@
-use std::error::Error;
+use anyhow::Result;
+use metainfo::Metainfo;
 
 mod bencode;
-fn main() -> Result<(), Box<dyn Error>> {
-    let args: Vec<String> = std::env::args().collect();
-    let torrent_bytes = std::fs::read(&args[1])?;
+mod metainfo;
 
-    match bencode::parse_bencode(&torrent_bytes) {
-        Ok((_, val)) => {
-            if let bencode::BencodeValue::Dictionary(dict) = val {
-                println!("{:#?}", dict);
-            } else {
-                panic!("Invalid torrent file!");
-            }
-        },
-        Err(e) => panic!("{}", e),
-    }
+fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    
+    let metainfo = Metainfo::from_file(&args[1])?;
+    println!("{:#?}", metainfo);
 
     Ok(())
 }
