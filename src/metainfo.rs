@@ -68,27 +68,27 @@ impl Metainfo {
             announce_urls
         } else {
             let announce_string = root.get("announce".as_bytes())
-                .ok_or(anyhow!("Invalid metainfo file: no announce URL"))?
+                .ok_or_else(|| anyhow!("Invalid metainfo file: no announce URL"))?
                 .as_str()?;
             
             vec![Url::parse(announce_string)?]
         };
 
         let info_dict = root.get("info".as_bytes())
-            .ok_or(anyhow!("Invalid metainfo file: no info dict"))?
+            .ok_or_else(|| anyhow!("Invalid metainfo file: no info dict"))?
             .as_dict()?;
 
         let name = info_dict.get("name".as_bytes())
-            .ok_or(anyhow!("Invalid info dict: no name"))?
+            .ok_or_else(|| anyhow!("Invalid info dict: no name"))?
             .as_str()?;
 
         let piece_length: u64 = info_dict.get("piece length".as_bytes())
-            .ok_or(anyhow!("Invalid info dict: no piece length"))?
+            .ok_or_else(|| anyhow!("Invalid info dict: no piece length"))?
             .as_integer()?
             .try_into()?;
         
         let pieces_bytestring  = info_dict.get("pieces".as_bytes())
-            .ok_or(anyhow!("Invalid info dict: no pieces bytestring"))?
+            .ok_or_else(|| anyhow!("Invalid info dict: no pieces bytestring"))?
             .as_bytes()?;
 
         let pieces_slices: Vec<&[u8]> = pieces_bytestring.chunks(20).collect();
@@ -105,12 +105,12 @@ impl Metainfo {
                 .map(|file_val| {
                     let file_dict = file_val.as_dict()?;
                     let file_length: u64 = file_dict.get("length".as_bytes())
-                        .ok_or(anyhow!("Invalid file entry: no length"))?
+                        .ok_or_else(|| anyhow!("Invalid file entry: no length"))?
                         .as_integer()?
                         .try_into()?;
 
                     let file_path = file_dict.get("path".as_bytes())
-                        .ok_or(anyhow!("Invalid file entry: no path"))?
+                        .ok_or_else(|| anyhow!("Invalid file entry: no path"))?
                         .as_list()?
                         .iter()
                         .map(|x| Ok(x.as_str()?.to_string()))
@@ -125,13 +125,13 @@ impl Metainfo {
             
                 Info::Directory(DirectoryInfo {
                     name: name.to_string(),
-                    files: files,
+                    files,
                 })
 
         } else {
             // Single file torrent
             let length: u64 = info_dict.get("length".as_bytes())
-                .ok_or(anyhow!("Invalid single-file torrent: no length"))?
+                .ok_or_else(|| anyhow!("Invalid single-file torrent: no length"))?
                 .as_integer()?
                 .try_into()?;
 

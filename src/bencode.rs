@@ -55,13 +55,13 @@ impl BencodeValue {
 
     pub fn as_str(&self) -> Result<&str> {
         let self_bytes = self.as_bytes()?;
-        Ok(std::str::from_utf8(&self_bytes)?)
+        Ok(std::str::from_utf8(self_bytes)?)
     }
 
 }
 
 pub fn digit1_or_negative(input: & [u8]) -> IResult<& [u8], & [u8]> {
-    input.split_at_position1_complete(|item| !(item.is_dec_digit() || item == ('-' as u8)), ErrorKind::Digit)
+    input.split_at_position1_complete(|item| !(item.is_dec_digit() || item == b'-'), ErrorKind::Digit)
 }
 
 pub fn parse_integer(input: & [u8]) -> IResult<& [u8], BencodeValue> {
@@ -115,7 +115,7 @@ pub fn parse_bytes(input: & [u8]) -> IResult<& [u8], BencodeBytes> {
     let (rest, _) = char(':')(rest)?;
     let (rest, bytes) = take(byte_string_len)(rest)?;
 
-    return Ok((rest, bytes.to_vec()))
+    Ok((rest, bytes.to_vec()))
 }
 
 pub fn parse_bencode(input: & [u8]) -> IResult<& [u8], BencodeValue> {
