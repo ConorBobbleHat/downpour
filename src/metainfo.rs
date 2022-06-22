@@ -8,20 +8,20 @@ type Sha1Hash = [u8; 20];
 
 #[derive(Debug)]
 pub struct SingleFileInfo {
-    name: String,
-    length: u64,
+    pub name: String,
+    pub length: u64,
 }
 
 #[derive(Debug)]
 pub struct DirectoryFileInfo {
-    path: Vec<String>,
-    length: u64,
+    pub path: Vec<String>,
+    pub length: u64,
 }
 
 #[derive(Debug)]
 pub struct DirectoryInfo {
-    name: String,
-    files: Vec<DirectoryFileInfo>,
+    pub name: String,
+    pub files: Vec<DirectoryFileInfo>,
 }
 
 #[derive(Debug)]
@@ -32,10 +32,10 @@ pub enum Info {
 
 #[derive(Debug)]
 pub struct Metainfo {
-    announce: Url,
-    piece_length: u64,
-    pieces: Vec<Sha1Hash>,
-    info: Info,
+    pub announce_list: Vec<Url>,
+    pub piece_length: u64,
+    pub pieces: Vec<Sha1Hash>,
+    pub info: Info,
 }
 
 impl Metainfo {
@@ -46,7 +46,7 @@ impl Metainfo {
 
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
         let (_, val) = bencode::parse_bencode(&bytes)
-                                            .map_err(|x| { anyhow!("Bencode parse error") })?;
+                                            .map_err(|_| { anyhow!("Bencode parse error") })?;
         Self::from_bencode(val)
     }
 
@@ -54,11 +54,25 @@ impl Metainfo {
         // The root-level element of a metainfo file needs to be a dictionary
         let root = val.as_dict()?;
 
-        let announce_string = root.get("announce".as_bytes())
-            .ok_or(anyhow!("Invalid metainfo file: no announce URL"))?
-            .as_str()?;
+        let announce_list = if let Some(BencodeValue::List(announce_list)) = root.get("announce-list".as_bytes()) {
+            // TODO: rewrite this using iter chains
+            let mut announce_urls = Vec::new();
+            
+            for tier_list in announce_list {
+                // TODO: the trackers in a tier are meant to be shuffled randomly.
+                for announce_val in tier_list.as_list()? {
+                    announce_urls.push(Url::parse(announce_val.as_str()?)?);
+                };
+            };
 
-        let announce = Url::parse(announce_string)?;
+            announce_urls
+        } else {
+            let announce_string = root.get("announce".as_bytes())
+                .ok_or(anyhow!("Invalid metainfo file: no announce URL"))?
+                .as_str()?;
+            
+            vec![Url::parse(announce_string)?]
+        };
 
         let info_dict = root.get("info".as_bytes())
             .ok_or(anyhow!("Invalid metainfo file: no info dict"))?
@@ -81,7 +95,7 @@ impl Metainfo {
 
         let pieces = pieces_slices.iter()
             .cloned()
-            .map(|x| x.try_into().map_err(|y| anyhow!("Failed to convert slice to array")))
+            .map(|x| x.try_into().map_err(|_| anyhow!("Failed to convert slice to array")))
             .collect::<Result<Vec<Sha1Hash>>>()?;
         
         // Is this a single file, or are we dealing with a whole-directory torrent?
@@ -102,10 +116,10 @@ impl Metainfo {
                         .map(|x| Ok(x.as_str()?.to_string()))
                         .collect::<Result<Vec<String>>>()?;
 
-                    Ok((DirectoryFileInfo {
+                    Ok(DirectoryFileInfo {
                         path: file_path,
                         length: file_length,
-                    }))
+                    })
                 })
                 .collect::<Result<Vec<DirectoryFileInfo>>>()?;
             
@@ -128,7 +142,7 @@ impl Metainfo {
         };
 
         Ok(Self {
-            announce,
+            announce_list,
             piece_length,
             pieces,
             info,
