@@ -1,10 +1,11 @@
-use std::{path::Path};
+use std::path::Path;
+use sha1::{Sha1, Digest};
 use url::Url;
 use anyhow::{anyhow, Result};
 
 use crate::bencode::{BencodeValue, self};
 
-type Sha1Hash = [u8; 20];
+pub type Sha1Hash = [u8; 20];
 
 #[derive(Debug)]
 pub struct SingleFileInfo {
@@ -36,6 +37,7 @@ pub struct Metainfo {
     pub piece_length: u64,
     pub pieces: Vec<Sha1Hash>,
     pub info: Info,
+    pub info_hash: Sha1Hash,
 }
 
 impl Metainfo {
@@ -47,10 +49,7 @@ impl Metainfo {
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
         let (_, val) = bencode::parse_bencode(&bytes)
                                             .map_err(|_| { anyhow!("Bencode parse error") })?;
-        Self::from_bencode(val)
-    }
 
-    pub fn from_bencode(val: BencodeValue) -> Result<Self> {
         // The root-level element of a metainfo file needs to be a dictionary
         let root = val.as_dict()?;
 
@@ -141,11 +140,20 @@ impl Metainfo {
             })
         };
 
+        // Calculate the torrent's info_hash as the SHA1 hash of the raw bytes of the info dictionary
+        let (_, info_dict_bytes) = bencode::parse_info_dict_raw(&bytes)
+            .map_err(|_| anyhow!("Could not get the raw bytes of the info dict"))?;
+
+        let mut hasher = Sha1::new();
+        hasher.update(info_dict_bytes);
+        let info_hash: Sha1Hash = hasher.finalize()[..].try_into()?;
+
         Ok(Self {
             announce_list,
             piece_length,
             pieces,
             info,
+            info_hash
         })
     }
 }

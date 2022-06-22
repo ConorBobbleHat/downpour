@@ -5,7 +5,7 @@ use nom::{
     character::complete::{char, digit1},
     combinator::{map, map_res},
     sequence::{delimited, tuple},
-    IResult, InputTakeAtPosition, multi::many0, bytes::complete::take, error::ErrorKind, AsChar
+    IResult, InputTakeAtPosition, multi::many0, bytes::complete::{take, take_until}, error::ErrorKind, AsChar
 };
 
 use anyhow::{anyhow, Result};
@@ -60,11 +60,11 @@ impl BencodeValue {
 
 }
 
-pub fn digit1_or_negative(input: & [u8]) -> IResult<& [u8], & [u8]> {
+fn digit1_or_negative(input: &[u8]) -> IResult<&[u8], &[u8]> {
     input.split_at_position1_complete(|item| !(item.is_dec_digit() || item == b'-'), ErrorKind::Digit)
 }
 
-pub fn parse_integer(input: & [u8]) -> IResult<& [u8], BencodeValue> {
+fn parse_integer(input: &[u8]) -> IResult<&[u8], BencodeValue> {
     map(
         delimited(
             char('i'),
@@ -75,7 +75,7 @@ pub fn parse_integer(input: & [u8]) -> IResult<& [u8], BencodeValue> {
     )(input)
 }
 
-pub fn parse_list(input: & [u8]) -> IResult<& [u8], BencodeValue> {
+fn parse_list(input: &[u8]) -> IResult<&[u8], BencodeValue> {
     map(
         delimited(
                 char('l'), 
@@ -86,14 +86,14 @@ pub fn parse_list(input: & [u8]) -> IResult<& [u8], BencodeValue> {
     )(input)
 }
 
-pub fn parse_dictionary_pair(input: & [u8]) -> IResult<& [u8], (BencodeBytes, BencodeValue)> {
+fn parse_dictionary_pair(input: &[u8]) -> IResult<&[u8], (BencodeBytes, BencodeValue)> {
     tuple((
         parse_bytes,
         parse_bencode
     ))(input)
 }
 
-pub fn parse_dictionary(input: & [u8]) -> IResult<& [u8], BencodeValue> {
+fn parse_dictionary(input: &[u8]) -> IResult<&[u8], BencodeValue> {
     map(
 map(
     delimited(
@@ -110,7 +110,7 @@ map(
 
 }
 
-pub fn parse_bytes(input: & [u8]) -> IResult<& [u8], BencodeBytes> {
+fn parse_bytes(input: &[u8]) -> IResult<&[u8], BencodeBytes> {
     let (rest, byte_string_len): (&[u8], u64) = map_res(map_res(digit1, std::str::from_utf8), str::parse)(input)?;
     let (rest, _) = char(':')(rest)?;
     let (rest, bytes) = take(byte_string_len)(rest)?;
@@ -118,11 +118,26 @@ pub fn parse_bytes(input: & [u8]) -> IResult<& [u8], BencodeBytes> {
     Ok((rest, bytes.to_vec()))
 }
 
-pub fn parse_bencode(input: & [u8]) -> IResult<& [u8], BencodeValue> {
+pub fn parse_bencode(input: &[u8]) -> IResult<&[u8], BencodeValue> {
     alt((
         parse_integer,
         parse_list,
         parse_dictionary,
         map(parse_bytes, BencodeValue::Bytes),
     ))(input)
+}
+
+// The info_hash of a metainfo file is defined as the sha1 hash of the raw value of the "info" key of the file
+// Given nom doesn't give us a way to return the byte range (without using something like nom_locate), and the alternative
+// is writing a bencode serializer (which no other part of the protocol requires), this parse function allows us to return the
+// raw byte representation of the info dictionary
+// TODO: this assumes the first time the bytestring "info" appears is as the key of the info dict. Replace with something a bit more robust.
+pub fn parse_info_dict_raw(input: &[u8]) -> IResult<&[u8], &[u8]> {
+    let (remaining, _) = take_until("4:info".as_bytes())(input)?;
+    let (remaining, _) = take(6usize)(remaining)?;
+
+    let (remaining_after_info_dict, _) = parse_dictionary(remaining)?;
+    let info_dict_length = remaining.len() - remaining_after_info_dict.len();
+
+    Ok((remaining_after_info_dict, &remaining[0..info_dict_length]))
 }
