@@ -8,5 +8,8 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.58"
 nom = "7.1.1"
+rand = "0.8.5"
+reqwest = { version = "0.11.11", features = ["blocking"] }
 sha1 = "0.10.1"
-url = "2.2.2"
+tokio = { version = "1.19.2", features = ["full"] }
+urlencoding = "2.1.0"

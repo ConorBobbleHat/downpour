@@ -1,6 +1,6 @@
 use std::path::Path;
 use sha1::{Sha1, Digest};
-use url::Url;
+use reqwest::Url;
 use anyhow::{anyhow, Result};
 
 use crate::bencode::{BencodeValue, self};
