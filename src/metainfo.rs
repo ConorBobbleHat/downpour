@@ -7,35 +7,36 @@ use crate::bencode::{self, BencodeValue};
 
 pub type Sha1Hash = [u8; 20];
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SingleFileInfo {
     pub name: String,
     pub length: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DirectoryFileInfo {
     pub path: Vec<String>,
     pub length: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DirectoryInfo {
     pub name: String,
     pub files: Vec<DirectoryFileInfo>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Info {
     SingleFile(SingleFileInfo),
     Directory(DirectoryInfo),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Metainfo {
     pub announce_list: Vec<Url>,
     pub piece_length: u64,
     pub pieces: Vec<Sha1Hash>,
+    pub total_length: usize,
     pub info: Info,
     pub info_hash: Sha1Hash,
 }
@@ -108,6 +109,7 @@ impl Metainfo {
             .collect::<Result<Vec<Sha1Hash>>>()?;
 
         // Is this a single file, or are we dealing with a whole-directory torrent?
+        let mut total_length = 0;
         let info = if let Some(BencodeValue::List(files_list)) = info_dict.get("files".as_bytes()) {
             // Whole-directory torrent
             let files: Vec<DirectoryFileInfo> = files_list
@@ -128,6 +130,8 @@ impl Metainfo {
                         .map(|x| Ok(x.as_str()?.to_string()))
                         .collect::<Result<Vec<String>>>()?;
 
+                    total_length += file_length;
+
                     Ok(DirectoryFileInfo {
                         path: file_path,
                         length: file_length,
@@ -147,6 +151,8 @@ impl Metainfo {
                 .as_integer()?
                 .try_into()?;
 
+            total_length = length;
+            
             Info::SingleFile(SingleFileInfo {
                 name: name.to_string(),
                 length,
@@ -165,6 +171,7 @@ impl Metainfo {
             announce_list,
             piece_length,
             pieces,
+            total_length: total_length as usize,
             info,
             info_hash,
         })

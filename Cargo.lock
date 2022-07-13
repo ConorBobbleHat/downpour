@@ -79,6 +79,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "boolvec"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c057a3e5631e754d98c5a9e3baa56803fce8fe238b009ecd876e57d381d44c00"
+
+[[package]]
 name = "bumpalo"
 version = "3.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -154,6 +160,7 @@ dependencies = [
  "anyhow",
  "binread",
  "binwrite",
+ "boolvec",
  "futures",
  "nom",
  "rand",
