@@ -58,6 +58,7 @@ async fn main() -> Result<()> {
     let peers = PeerList(HashSet::from_iter(
             vec![
                 "192.168.68.107:60234",
+                "192.168.68.107:6881",
             ]
             .into_iter()
             .map(|s| s.parse().unwrap())

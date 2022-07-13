@@ -479,9 +479,7 @@ impl Downloader {
                                     if let Some(piece_index) = flag_next_piece(&self.metainfo, &peer_state, &mut pieces_state) {
                                         request_next_block(piece_index, &self.metainfo, &peer_state, &mut pieces_state).await?;
                                     } else {
-                                        // TODO: keep this peer open to see if they have a piece instead of closing immediately
-                                        // if they don't?
-                                        return Err(anyhow!("No pieces available to download from peer."));
+                                        eprintln!("WARNING: No pieces available to download from peer.");
                                     }
                                 }
                             },
@@ -529,19 +527,16 @@ impl Downloader {
                                     };
 
                                     let num_blocks = (piece_len - 1) / (BLOCK_LENGTH as usize) + 1;
-                                    let next_piece_index = if block_index + 1 >= num_blocks {
+                                    
+                                    if block_index + 1 >= num_blocks {
                                         if let Some(next_piece_index) = flag_next_piece(&self.metainfo, &peer_state, &mut pieces_state) {
-                                            next_piece_index
+                                            request_next_block(next_piece_index, &self.metainfo, peer_state, &mut pieces_state).await?
                                         } else {
-                                            // TODO: keep this peer open to see if they have a piece instead of closing immediately
-                                            // if they don't?
-                                            return Err(anyhow!("No more pieces available to download from peer."));
+                                            eprintln!("WARNING: No more pieces available to download from peer.");
                                         }
                                     } else {
-                                        piece_index
+                                        request_next_block(piece_index, &self.metainfo, peer_state, &mut pieces_state).await?;
                                     };
-
-                                    request_next_block(next_piece_index, &self.metainfo, peer_state, &mut pieces_state).await?;
 
                                  } else {
                                     eprintln!("WARNING: received piece data for a block not currently being downloaded.");
