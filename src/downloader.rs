@@ -466,7 +466,7 @@ impl Downloader {
                         let peer_state = peer_states.get_mut(&peer).unwrap();
 
                         match packet {
-                            Packet::KeepAlive => todo!(),
+                            Packet::KeepAlive => eprintln!("WARNING: Ignoring keep-alive received from {}", peer),
                             Packet::Choke => peer_state.choking_us = true,
                             Packet::Unchoke => {
                                 if peer_state.choking_us {
@@ -490,7 +490,7 @@ impl Downloader {
                             Packet::Bitfield(bitfield_packet) => {
                                 peer_state.bitfield = BoolVec::from_vec(bitfield_packet.bitfield);
                             },
-                            Packet::Request(_) => todo!(),
+                            Packet::Request(_) => eprintln!("WARNING: Ignoring request for a piece from {}", peer),
                             Packet::Piece(piece_packet) => {
                                 let piece_index = piece_packet.index as usize;
                                 if let PieceState::Downloading { block_index } = pieces_state[piece_index] {
@@ -552,7 +552,7 @@ impl Downloader {
                                     eprintln!("WARNING: received piece data for a block not currently being downloaded.");
                                 }
                             },
-                            Packet::Cancel(_) => todo!(),
+                            Packet::Cancel(_) => eprintln!("WARNING: cancel packet from {} ignored", peer),
                         };
                     };
                 },
