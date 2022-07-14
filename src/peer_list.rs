@@ -38,10 +38,9 @@ async fn fetch_peers_http(
         url.query_pairs_mut()
             .append_pair("peer_id", std::str::from_utf8(&client_config.peer_id)?)
             .append_pair("port", &client_config.port.to_string())
-            // TODO: do any trackers require accurate values for these fields?
             .append_pair("uploaded", "0")
             .append_pair("downloaded", "0")
-            .append_pair("left", "0");
+            .append_pair("left", &metainfo.total_length.to_string());
 
         let res = reqwest::get(url).await?.bytes().await?;
 
@@ -189,12 +188,10 @@ async fn fetch_peers_udp(
             transaction_id,
             info_hash: metainfo.info_hash,
             peer_id: client_config.peer_id,
-            // TODO: as with the HTTP tracker protocol, are there any trackers that rely
-            // on these values being correct (downloaded, left, uploaded, event, ip, and key)?
             downloaded: 0,
-            left: 0,
+            left: metainfo.total_length as u64,
             uploaded: 0,
-            event: 0, // none
+            event: 2, // started
             ip: 0,
             key: 0,
             num_want: -1,

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::time::Duration;
 
 use anyhow::Result;
 use downloader::Downloader;
@@ -46,25 +46,16 @@ async fn main() -> Result<()> {
     let client_config = ClientConfig {
         peer_id: peer_id.as_bytes().try_into()?,
         port: 7881,
-        timeout: std::time::Duration::from_secs(2),
-        active_peers: 80,
-        peer_update_interval: std::time::Duration::from_secs(10),
+        timeout: Duration::from_secs(2),
+        active_peers: 8,
+        peer_update_interval: Duration::from_secs(10),
         download_dir: "./downloads".into(),
     };
 
     let metainfo = Metainfo::from_file(&args[1])?;
-    //let peers = PeerList::fetch_peers_from_metainfo(&metainfo, &client_config).await;
+    let peers = PeerList::fetch_peers_from_metainfo(&metainfo, &client_config).await;
 
-    let peers = PeerList(HashSet::from_iter(
-            vec![
-                "192.168.68.107:60234",
-                "192.168.68.107:6881",
-            ]
-            .into_iter()
-            .map(|s| s.parse().unwrap())
-    ));
-
-    if peers.0.len() == 0 {
+    if peers.0.is_empty() {
         eprintln!("Unable to source any peers; exiting.");
         return Ok(());
     }

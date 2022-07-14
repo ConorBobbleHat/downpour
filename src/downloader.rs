@@ -1,12 +1,10 @@
-use std::{io::{Cursor, SeekFrom}, net::SocketAddr, collections::HashMap, f32::consts::E, path::{PathBuf, Path}};
+use std::{io::{Cursor, SeekFrom}, net::SocketAddr, collections::HashMap, path::{PathBuf, Path}};
 
 use anyhow::{anyhow, Result};
 use binread::BinRead;
 use binwrite::BinWrite;
 use boolvec::BoolVec;
-use futures::{stream::FuturesUnordered, StreamExt};
-use rand::prelude::IteratorRandom;
-use reqwest::Request;
+use futures::{stream::FuturesUnordered, StreamExt, Future};
 use tokio::{io::{AsyncWriteExt, AsyncSeekExt}, net::TcpStream, sync::mpsc, fs::File};
 
 use crate::{
@@ -164,7 +162,6 @@ struct PeerPacket {
 
 #[derive(Debug)]
 enum PeerOutgoingMessage {
-    Have { index: u32 },
     RequestBlock { index: u32, begin: u32, length: u32},
 }
 
@@ -205,10 +202,10 @@ async fn peer_thread(
             return Err(anyhow!("Invalid handshake received from peer"));
         }
 
-        println!(
-            "Connection established to {}",
-            std::str::from_utf8(&handshake_reply.peer_id)?
-        );
+        match std::str::from_utf8(&handshake_reply.peer_id) {
+            Ok(str) => println!("Connection established to {}", str),
+            Err(_) => println!("Connection established to {:?}", &handshake_reply.peer_id),
+        }
 
         // Immediately unchoke and register our interest in this peer
         let mut bytes = vec![];
@@ -254,15 +251,6 @@ async fn peer_thread(
                 msg = manager_rx.recv() => {
                     if let Some(msg) = msg {
                         match msg {
-                            PeerOutgoingMessage::Have {index} => {
-                                let mut bytes = vec![];
-                                HavePacket {
-                                    header: PacketHeader { len: 5, id: 4 },
-                                    index,
-                                }.write(&mut bytes)?;
-                                stream.write_all(&bytes).await?;
-
-                            },
                             PeerOutgoingMessage::RequestBlock { index, begin, length } => {
                                 let mut bytes = vec![];
                                 RequestPacket {
@@ -278,15 +266,24 @@ async fn peer_thread(
                 }
             }
         }
-
-        Ok(())
     }
 }
 
+struct PeerThreadResult {
+    result: Result<()>,
+    peer: SocketAddr,
+}
+
+async fn peer_thread_wrapper(thread: impl Future<Output = Result<()>>, peer: SocketAddr) -> PeerThreadResult {
+    PeerThreadResult { result: thread.await, peer }
+}
+
+#[derive(Clone)]
 struct PeerState {
     choking_us: bool,
     interested_in_us: bool,
     bitfield: BoolVec,
+    currently_downloading_piece: Option<usize>,
     tx: mpsc::Sender<PeerOutgoingMessage>
 }
 
@@ -316,7 +313,7 @@ async fn preallocate_file(path: &Path, length: usize) -> Result<File> {
     Ok(f)
 }
 
-fn flag_next_piece(metainfo: &Metainfo, peer_state: &PeerState, pieces_state: &mut Vec<PieceState>) -> Option<usize> {
+fn flag_next_piece(metainfo: &Metainfo, peer_state: &PeerState, pieces_state: &mut [PieceState]) -> Option<usize> {
     for piece_index in 0..metainfo.pieces.len() {
         if peer_state.bitfield.get(piece_index).unwrap_or(false) &&
             matches!(pieces_state[piece_index], PieceState::Unstarted | PieceState::Stalled { block_index: _ })
@@ -327,10 +324,10 @@ fn flag_next_piece(metainfo: &Metainfo, peer_state: &PeerState, pieces_state: &m
         }
     };
 
-    return None;
+    None
 }
 
-async fn request_next_block(piece_index: usize, metainfo: &Metainfo, peer_state: &PeerState, pieces_state: &mut Vec<PieceState>) -> Result<()> {
+async fn request_next_block(piece_index: usize, metainfo: &Metainfo, peer_state: &PeerState, pieces_state: &mut [PieceState]) -> Result<()> {
     if let PieceState::Downloading { block_index } = pieces_state[piece_index] {
         let piece_len = if piece_index == metainfo.pieces.len() - 1 {
             metainfo.total_length % metainfo.piece_length as usize
@@ -341,12 +338,10 @@ async fn request_next_block(piece_index: usize, metainfo: &Metainfo, peer_state:
         let num_blocks = (piece_len - 1) / (BLOCK_LENGTH as usize) + 1;
         let block_length = if piece_len % BLOCK_LENGTH as usize == 0 {
             BLOCK_LENGTH
+        } else if block_index + 1 == num_blocks {
+            piece_len as u32 % BLOCK_LENGTH
         } else {
-            if block_index + 1 == num_blocks {
-                piece_len as u32 % BLOCK_LENGTH
-            } else {
-                BLOCK_LENGTH
-            }
+            BLOCK_LENGTH
         };
 
         peer_state.tx.send(PeerOutgoingMessage::RequestBlock {
@@ -378,7 +373,7 @@ impl Downloader {
         }
     }
 
-    pub async fn download(self) -> Result<()> {
+    pub async fn download(mut self) -> Result<()> {
         // First, preallocate space for all our files
         #[derive(Debug)]
         struct FileSpan {
@@ -416,41 +411,12 @@ impl Downloader {
             },
         }
 
-        // When we start downloading, we have no idea which peers have the best download speed
-        // As such, just pick our starting set at random
-        let mut rng = rand::thread_rng();
-        let starting_peer_addrs = self
-            .peers
-            .0
-            .into_iter()
-            .choose_multiple(&mut rng, self.client_config.active_peers);
-
         let mut peer_update_interval =
             tokio::time::interval(self.client_config.peer_update_interval);
 
         let (tx, mut rx) = mpsc::channel(32);
         let mut peer_thread_futures = FuturesUnordered::new();
-        let mut peer_states = HashMap::new();
-
-        for peer in starting_peer_addrs {
-            let (thread_tx, thread_rx) = mpsc::channel(32);
-
-            let handle = tokio::spawn(peer_thread(
-                peer,
-                self.client_config.clone(),
-                self.metainfo.clone(),
-                tx.clone(),
-                thread_rx,
-            ));
-
-            peer_thread_futures.push(handle);
-            peer_states.insert(peer, PeerState {
-                choking_us: true,
-                interested_in_us: false,
-                bitfield: BoolVec::filled_with(self.metainfo.pieces.len(), false),
-                tx: thread_tx,
-            });
-        }
+        let mut peer_states: HashMap<SocketAddr, PeerState> = HashMap::new();
 
         let mut pieces_state = Vec::new();
         pieces_state.resize(self.metainfo.pieces.len(), PieceState::Unstarted);
@@ -458,7 +424,39 @@ impl Downloader {
         loop {
             tokio::select! {
                 _ = peer_update_interval.tick() => {
-                    println!("TODO: update peers");
+                    while peer_thread_futures.len() < self.client_config.active_peers {     
+                        let peer = match self.peers.0
+                            .clone()
+                            .into_iter()
+                            .find(|p| !peer_states.contains_key(p)) {
+                                Some(p) => p,
+                                None => break,
+                            };
+
+                        println!("Spawning peer thread {}", peer);
+
+                        let (thread_tx, thread_rx) = mpsc::channel(32);
+                            
+                        let handle = tokio::spawn(peer_thread_wrapper(
+                            peer_thread(
+                                peer,
+                                self.client_config.clone(),
+                                self.metainfo.clone(),
+                                tx.clone(),
+                                thread_rx,
+                            ),
+                            peer
+                        ));
+            
+                        peer_thread_futures.push(handle);
+                        peer_states.insert(peer, PeerState {
+                            choking_us: true,
+                            interested_in_us: false,
+                            bitfield: BoolVec::filled_with(self.metainfo.pieces.len(), false),
+                            currently_downloading_piece: None,
+                            tx: thread_tx,
+                        });
+                    }
                 },
 
                 peer_packet = rx.recv() => {
@@ -476,8 +474,9 @@ impl Downloader {
                                     
                                     // Now that we're able to download from this peer,
                                     // find the first unstarted / stalled piece we need that this peer has
-                                    if let Some(piece_index) = flag_next_piece(&self.metainfo, &peer_state, &mut pieces_state) {
-                                        request_next_block(piece_index, &self.metainfo, &peer_state, &mut pieces_state).await?;
+                                    if let Some(piece_index) = flag_next_piece(&self.metainfo, peer_state, &mut pieces_state) {
+                                        peer_state.currently_downloading_piece = Some(piece_index);
+                                        request_next_block(piece_index, &self.metainfo, peer_state, &mut pieces_state).await?;
                                     } else {
                                         eprintln!("WARNING: No pieces available to download from peer.");
                                     }
@@ -485,7 +484,9 @@ impl Downloader {
                             },
                             Packet::Interested => peer_state.interested_in_us = true,
                             Packet::NotInterested => peer_state.choking_us = false,
-                            Packet::Have(_) => todo!(),
+                            Packet::Have(have_packet) => {
+                                peer_state.bitfield.set(have_packet.index as usize, true);
+                            },
                             Packet::Bitfield(bitfield_packet) => {
                                 peer_state.bitfield = BoolVec::from_vec(bitfield_packet.bitfield);
                             },
@@ -504,7 +505,7 @@ impl Downloader {
 
                                     let file_index = file_handles.iter_mut()
                                         .position(|f| (f.start + f.length) > block_torrent_offset)
-                                        .ok_or(anyhow!("Piece index out of range for files provided (?)"))?;
+                                        .ok_or_else(|| anyhow!("Piece index out of range for files provided (?)"))?;
 
                                     let f = &mut file_handles[file_index];
                                     let write_length = std::cmp::min(f.start + f.length - block_torrent_offset, piece_packet.block.len());
@@ -529,7 +530,16 @@ impl Downloader {
                                     let num_blocks = (piece_len - 1) / (BLOCK_LENGTH as usize) + 1;
                                     
                                     if block_index + 1 >= num_blocks {
-                                        if let Some(next_piece_index) = flag_next_piece(&self.metainfo, &peer_state, &mut pieces_state) {
+                                        pieces_state[piece_index] = PieceState::Finished;
+                                        
+                                        let finished_pieces = pieces_state.iter()
+                                                .filter(|p| matches!(p, PieceState::Finished))
+                                                .count();
+
+                                        println!("Finished downloading piece {}, {}% complete.", piece_index, (finished_pieces as f32 / pieces_state.len() as f32) * 100.);
+
+                                        if let Some(next_piece_index) = flag_next_piece(&self.metainfo, peer_state, &mut pieces_state) {
+                                            peer_state.currently_downloading_piece = Some(piece_index);
                                             request_next_block(next_piece_index, &self.metainfo, peer_state, &mut pieces_state).await?
                                         } else {
                                             eprintln!("WARNING: No more pieces available to download from peer.");
@@ -548,17 +558,31 @@ impl Downloader {
                 },
 
                 peer_fut = peer_thread_futures.next() => {
-                    match peer_fut {
-                        Some(e) => eprintln!("{:?}", e),
-                        None => {
-                            println!("All peer threads ended, exiting (TODO: more peers!)");
-                            break;
-                        },
+                    if let Some(res) = peer_fut {
+                            match res {
+                                Ok(res) => {
+                                    let PeerThreadResult {result, peer} = res;
+                                    match result {
+                                        Ok(_) => println!("Peer thread {} exited gracefully", peer),
+                                        Err(e) => {
+                                            eprintln!("Peer thread {} exited with error {}; removing from pool.", peer, e);
+                                            self.peers.0.remove(&peer);
+
+                                            // Mark the piece we were downloading from this peer as stalled
+                                            // so another peer can pick up the work from it
+                                            if let Some(piece_index) = peer_states.get(&peer).unwrap().currently_downloading_piece {
+                                                if let PieceState::Downloading { block_index } = pieces_state[piece_index] {
+                                                    pieces_state[piece_index] = PieceState::Stalled { block_index };
+                                                };
+                                            };
+                                        },
+                                    };
+                                },
+                                Err(e) => eprintln!("Error joining peer thread: {}", e),
+                            }
                     }
                 }
             }
         };
-
-        Ok(())
     }
 }
